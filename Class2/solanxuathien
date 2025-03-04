@@ -1,0 +1,7 @@
+def count_word_occurrences(s, word):
+    return s.split().count(word)
+
+
+s = "đây là một ví dụ về một chuỗi với một từ lặp lại nhiều lần"
+word = "một"
+print(count_word_occurrences(s, word))  
