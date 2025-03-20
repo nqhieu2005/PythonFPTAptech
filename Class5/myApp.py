@@ -2,10 +2,12 @@ from pymongo import MongoClient
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
-import os
 import base64
 import io
 import sys
+from datetime import datetime
+import math
+
 
 class MongoDB:
     def __init__(self):
@@ -28,6 +30,12 @@ class MongoDB:
         self.current_image_data = None
         # Biến để theo dõi trạng thái chỉnh sửa
         self.is_editing = False
+
+        self.current_page = 1
+        self.contacts_per_page = 10
+        self.total_pages = 1
+        self.total_contacts = 0
+        self.current_search = ""
 
         # Tạo frame chính
         main_frame = tk.Frame(self.window, bg="#f0f0f0")
@@ -94,6 +102,11 @@ class MongoDB:
                                     bg="#607D8B", fg="white", font=("Arial", 10, "bold"), padx=15, pady=5)
         self.clear_button.pack(side=tk.LEFT, padx=5)
 
+        self.chat_button = tk.Button(button_frame, text="Chat", command=self.open_chat,
+                           bg="#9C27B0", fg="white", font=("Arial", 10, "bold"), padx=15, pady=5)
+        self.chat_button.pack(side=tk.LEFT, padx=5)
+        self.chat_button.config(state=tk.DISABLED) 
+
         # Frame tìm kiếm
         search_frame = tk.Frame(main_frame, bg="#f0f0f0")
         search_frame.pack(fill="x", padx=10, pady=5)
@@ -106,6 +119,31 @@ class MongoDB:
         # Frame cho danh sách liên hệ
         list_frame = tk.LabelFrame(main_frame, text="Danh sách liên hệ", padx=10, pady=10, bg="#f0f0f0", font=("Arial", 12, "bold"))
         list_frame.pack(padx=10, pady=5, fill='both', expand=True)
+        # Create pagination frame
+        pagination_frame = tk.Frame(main_frame, bg="#f0f0f0")
+        pagination_frame.pack(fill="x", padx=10, pady=5)
+
+        # Previous page button
+        self.prev_button = tk.Button(pagination_frame, text="<<", command=self.prev_page,
+                                bg="#607D8B", fg="white", font=("Arial", 10, "bold"), padx=10, pady=3)
+        self.prev_button.pack(side=tk.LEFT, padx=5)
+
+        # Page info label
+        self.page_info = tk.Label(pagination_frame, text="Trang 1 / 1", bg="#f0f0f0", font=("Arial", 11))
+        self.page_info.pack(side=tk.LEFT, padx=10)
+
+        # Next page button
+        self.next_button = tk.Button(pagination_frame, text=">>", command=self.next_page,
+                                bg="#607D8B", fg="white", font=("Arial", 10, "bold"), padx=10, pady=3)
+        self.next_button.pack(side=tk.LEFT, padx=5)
+
+        # Items per page dropdown
+        tk.Label(pagination_frame, text="Số liên hệ/trang:", bg="#f0f0f0", font=("Arial", 11)).pack(side=tk.LEFT, padx=10)
+        self.page_size_var = tk.StringVar(value="10")
+        page_size_options = ttk.Combobox(pagination_frame, textvariable=self.page_size_var, 
+                                        values=["5", "10", "20", "50"], width=5)
+        page_size_options.pack(side=tk.LEFT, padx=5)
+        page_size_options.bind("<<ComboboxSelected>>", self.change_page_size)
 
         # Tạo thanh cuộn
         scrollbar_y = tk.Scrollbar(list_frame)
@@ -163,6 +201,7 @@ class MongoDB:
         self.add_button.config(state=tk.NORMAL)
         self.update_button.config(state=tk.DISABLED)
         self.delete_button.config(state=tk.DISABLED)
+        self.chat_button.config(state=tk.DISABLED)
 
     def select_image(self):
         """Chọn ảnh từ máy tính và hiển thị trên giao diện"""
@@ -264,6 +303,7 @@ class MongoDB:
     def select_contact(self, event):
         """Chọn một liên hệ từ danh sách để xem/chỉnh sửa"""
         selected_item = self.tree.selection()
+        self.chat_button.config(state=tk.NORMAL)
         if not selected_item:
             return
             
@@ -311,12 +351,48 @@ class MongoDB:
         self.delete_button.config(state=tk.NORMAL)
 
     def load_contacts(self):
-        """Tải danh sách liên hệ từ CSDL"""
         for row in self.tree.get_children():
             self.tree.delete(row)
 
         try:
-            contacts = self.collection.find()
+            # Count total contacts for pagination
+            if self.current_search:
+                query = {
+                    "$or": [
+                        {"name": {"$regex": self.current_search, "$options": "i"}},
+                        {"phone": {"$regex": self.current_search, "$options": "i"}},
+                        {"email": {"$regex": self.current_search, "$options": "i"}}
+                    ]
+                }
+                self.total_contacts = self.collection.count_documents(query)
+            else:
+                self.total_contacts = self.collection.count_documents({})
+            
+            # Calculate total pages
+            self.total_pages = math.ceil(self.total_contacts / self.contacts_per_page)
+            if self.total_pages == 0:
+                self.total_pages = 1
+            
+            # Ensure current page is valid
+            if self.current_page > self.total_pages:
+                self.current_page = self.total_pages
+            
+            # Update pagination display
+            self.page_info.config(text=f"Trang {self.current_page} / {self.total_pages}")
+            
+            # Enable/disable navigation buttons
+            self.prev_button.config(state=tk.NORMAL if self.current_page > 1 else tk.DISABLED)
+            self.next_button.config(state=tk.NORMAL if self.current_page < self.total_pages else tk.DISABLED)
+            
+            # Calculate skip value for pagination
+            skip = (self.current_page - 1) * self.contacts_per_page
+            
+            # Query with pagination
+            if self.current_search:
+                contacts = self.collection.find(query).skip(skip).limit(self.contacts_per_page)
+            else:
+                contacts = self.collection.find().skip(skip).limit(self.contacts_per_page)
+            
             for contact in contacts:
                 # Hiển thị phần đầu của ID để tiện theo dõi
                 contact_id = str(contact["_id"])
@@ -331,6 +407,9 @@ class MongoDB:
     def search_contacts(self, event=None):
         """Tìm kiếm liên hệ theo tên, số điện thoại hoặc email"""
         search_text = self.search_entry.get().strip().lower()
+        self.current_search = search_text
+        self.current_page = 1  # Reset to first page
+        self.load_contacts()
         
         # Xóa tất cả các mục hiện tại
         for row in self.tree.get_children():
@@ -358,7 +437,210 @@ class MongoDB:
                 self.tree.insert("", "end", values=(contact_id, contact["name"], contact["phone"], contact["email"], has_image))
         except Exception as e:
             messagebox.showerror("Lỗi", f"Lỗi khi tìm kiếm: {str(e)}")
+    
 
+    def open_chat(self):
+        """Open chat window with selected contact"""
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showerror("Lỗi", "Vui lòng chọn một liên hệ để chat")
+            return
+            
+        item = self.tree.item(selected_item[0])
+        values = item["values"]
+        contact_id = values[0]
+        contact_name = values[1]
+        
+        # Create chat window
+        self.chat_window = tk.Toplevel(self.window)
+        self.chat_window.title(f"Chat với {contact_name}")
+        self.chat_window.geometry("500x600")
+        self.chat_window.configure(bg="#f0f0f0")
+        
+        # Chat history frame
+        chat_frame = tk.Frame(self.chat_window, bg="#f0f0f0")
+        chat_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Chat history display with scrollbar
+        chat_history_frame = tk.Frame(chat_frame, bg="#f0f0f0")
+        chat_history_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        chat_scrollbar = tk.Scrollbar(chat_history_frame)
+        chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.chat_history = tk.Text(chat_history_frame, wrap=tk.WORD, state=tk.DISABLED, 
+                                yscrollcommand=chat_scrollbar.set, bg="white", font=("Arial", 11))
+        self.chat_history.pack(fill="both", expand=True)
+        chat_scrollbar.config(command=self.chat_history.yview)
+        
+        # Input frame
+        input_frame = tk.Frame(chat_frame, bg="#f0f0f0")
+        input_frame.pack(fill="x", padx=5, pady=5)
+        
+        self.message_entry = tk.Text(input_frame, height=2, width=40, font=("Arial", 11))
+        self.message_entry.pack(side=tk.LEFT, fill="x", expand=True, padx=5)
+        self.message_entry.bind("<Return>", lambda event: self.send_message(contact_id, contact_name))
+        
+        send_button = tk.Button(input_frame, text="Gửi", command=lambda: self.send_message(contact_id, contact_name),
+                            bg="#2196F3", fg="white", font=("Arial", 10, "bold"), padx=15, pady=5)
+        send_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Button frame
+        button_frame = tk.Frame(chat_frame, bg="#f0f0f0")
+        button_frame.pack(fill="x", padx=5, pady=5)
+        
+        clear_chat_button = tk.Button(button_frame, text="Xóa lịch sử chat", 
+                                    command=lambda: self.clear_chat_history(contact_id),
+                                    bg="#F44336", fg="white", font=("Arial", 10), padx=10, pady=3)
+        clear_chat_button.pack(side=tk.LEFT, padx=5)
+        
+        # Load chat history for this contact
+        self.load_chat_history(contact_id, contact_name)
+        
+        # Set focus to message entry
+        self.message_entry.focus_set()
+        
+    def send_message(self, contact_id, contact_name):
+        """Send a message to the contact"""
+        message = self.message_entry.get("1.0", tk.END).strip()
+        if not message:
+            return "break"
+            
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        
+        # Save message to database
+        chat_message = {
+            "contact_id": contact_id,
+            "sender": "me",
+            "message": message,
+            "timestamp": timestamp
+        }
+        
+        try:
+            # Store messages in a new collection 'chat_messages'
+            if 'chat_messages' not in self.db.list_collection_names():
+                self.db.create_collection('chat_messages')
+                
+            self.db['chat_messages'].insert_one(chat_message)
+            
+            # Display message in chat window
+            self.chat_history.config(state=tk.NORMAL)
+            self.chat_history.insert(tk.END, f"Bạn ({timestamp}):\n", "sender")
+            self.chat_history.insert(tk.END, f"{message}\n\n", "message")
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+            
+            # Configure tags
+            self.chat_history.tag_configure("sender", foreground="#007BFF", font=("Arial", 10, "bold"))
+            self.chat_history.tag_configure("message", font=("Arial", 11))
+            self.chat_history.tag_configure("receiver", foreground="#28A745", font=("Arial", 10, "bold"))
+            
+            # Clear message entry
+            self.message_entry.delete("1.0", tk.END)
+            
+            # Simulate a response after a short delay (for demonstration)
+            self.chat_window.after(1000, lambda: self.simulate_response(contact_id, contact_name))
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể gửi tin nhắn: {str(e)}")
+        
+        return "break"  # Prevent default Return behavior in Text widget
+        
+    def simulate_response(self, contact_id, contact_name):
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        responses = [
+            f"Xin chào! Đây là tin nhắn tự động từ {contact_name}: Cảm ơn đã liên hệ, tôi sẽ trả lời ngay sau khi online.",
+            # "Tôi sẽ liên hệ lại với bạn sau.",
+            # "Cảm ơn vì đã nhắn tin. Tôi đang bận, sẽ trả lời sau.",
+            # "Rất vui khi nhận được tin nhắn của bạn!",
+            # "Ok, tôi đã nhận được thông tin."
+        ]
+        
+        import random
+        message = random.choice(responses)
+        
+        # Save message to database
+        chat_message = {
+            "contact_id": contact_id,
+            "sender": "contact",
+            "message": message,
+            "timestamp": timestamp
+        }
+        
+        try:
+            self.db['chat_messages'].insert_one(chat_message)
+            
+            # Display message in chat window
+            self.chat_history.config(state=tk.NORMAL)
+            self.chat_history.insert(tk.END, f"{contact_name} ({timestamp}):\n", "receiver")
+            self.chat_history.insert(tk.END, f"{message}\n\n", "message")
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+        except Exception as e:
+            print(f"Lỗi khi mô phỏng phản hồi: {str(e)}")
+        
+    def load_chat_history(self, contact_id, contact_name):
+        """Load chat history for a specific contact"""
+        try:
+            messages = self.db['chat_messages'].find({"contact_id": contact_id}).sort("timestamp", 1)
+            
+            self.chat_history.config(state=tk.NORMAL)
+            self.chat_history.delete("1.0", tk.END)
+            
+            # Configure tags
+            self.chat_history.tag_configure("sender", foreground="#007BFF", font=("Arial", 10, "bold"))
+            self.chat_history.tag_configure("message", font=("Arial", 11))
+            self.chat_history.tag_configure("receiver", foreground="#28A745", font=("Arial", 10, "bold"))
+            
+            for msg in messages:
+                if msg["sender"] == "me":
+                    self.chat_history.insert(tk.END, f"Bạn ({msg['timestamp']}):\n", "sender")
+                else:
+                    self.chat_history.insert(tk.END, f"{contact_name} ({msg['timestamp']}):\n", "receiver")
+                
+                self.chat_history.insert(tk.END, f"{msg['message']}\n\n", "message")
+            
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể tải lịch sử chat: {str(e)}")
+        
+    def clear_chat_history(self, contact_id):
+        """Clear chat history for a specific contact"""
+        confirm = messagebox.askyesno("Xác nhận", "Bạn có chắc chắn muốn xóa tất cả tin nhắn với liên hệ này?")
+        if not confirm:
+            return
+            
+        try:
+            self.db['chat_messages'].delete_many({"contact_id": contact_id})
+            
+            # Clear display
+            self.chat_history.config(state=tk.NORMAL)
+            self.chat_history.delete("1.0", tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+            
+            messagebox.showinfo("Thông báo", "Đã xóa lịch sử chat thành công")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể xóa lịch sử chat: {str(e)}")
+    def prev_page(self):
+  
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_contacts()
+
+    def next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.load_contacts()
+
+    def change_page_size(self, event=None):
+        """Change number of contacts per page"""
+        try:
+            self.contacts_per_page = int(self.page_size_var.get())
+            self.current_page = 1  # Reset to first page
+            self.load_contacts()
+        except ValueError:
+            pass
 
 if __name__ == "__main__":
     app = MongoDB()
