@@ -24,11 +24,8 @@ class MongoDB:
         self.window.geometry("1000x650")
         self.window.configure(bg="#f0f0f0")
         
-        # Biến để lưu ID của liên hệ đang được chỉnh sửa
         self.current_id = None
-        # Biến để lưu ảnh hiện tại dưới dạng base64
         self.current_image_data = None
-        # Biến để theo dõi trạng thái chỉnh sửa
         self.is_editing = False
 
         self.current_page = 1
@@ -440,7 +437,6 @@ class MongoDB:
     
 
     def open_chat(self):
-        """Open chat window with selected contact"""
         selected_item = self.tree.selection()
         if not selected_item:
             messagebox.showerror("Lỗi", "Vui lòng chọn một liên hệ để chat")
@@ -550,10 +546,10 @@ class MongoDB:
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         responses = [
             f"Xin chào! Đây là tin nhắn tự động từ {contact_name}: Cảm ơn đã liên hệ, tôi sẽ trả lời ngay sau khi online.",
-            # "Tôi sẽ liên hệ lại với bạn sau.",
-            # "Cảm ơn vì đã nhắn tin. Tôi đang bận, sẽ trả lời sau.",
-            # "Rất vui khi nhận được tin nhắn của bạn!",
-            # "Ok, tôi đã nhận được thông tin."
+            "Tôi sẽ liên hệ lại với bạn sau.",
+            "Cảm ơn vì đã nhắn tin. Tôi đang bận, sẽ trả lời sau.",
+            "Rất vui khi nhận được tin nhắn của bạn!",
+            "Ok, tôi đã nhận được thông tin."
         ]
         
         import random
